@@ -19,14 +19,10 @@ namespace Parse
     {
         internal static readonly string[] DateFormatStrings =
         {
-            // Official ISO format
+            // It's possible that the string converter server-side may trim trailing zeroes, so the extra format strings provide addition protection.
             "yyyy'-'MM'-'dd'T'HH':'mm':'ss'.'fff'Z'",
-
-            // It's possible that the string converter server-side may trim trailing zeroes,
-            // so these two formats cover ourselves from that.
             "yyyy'-'MM'-'dd'T'HH':'mm':'ss'.'ff'Z'",
             "yyyy'-'MM'-'dd'T'HH':'mm':'ss'.'f'Z'",
-
         };
 
         /// <summary>
@@ -54,7 +50,7 @@ namespace Parse
                 /// An instance of <see cref="MetadataBasedStorageConfiguration"/> with inferred values based on the entry assembly. Should be used with <see cref="VersionInformation.Inferred"/>.
                 /// </summary>
                 /// <remarks>Should not be used with Unity.</remarks>
-                //public static MetadataBasedStorageConfiguration NoCompanyInferred { get; } = new MetadataBasedStorageConfiguration { CompanyName = Assembly.GetEntryAssembly().GetName().Name, ProductName = String.Empty };
+             //   public static MetadataBasedStorageConfiguration NoCompanyInferred { get; } = new MetadataBasedStorageConfiguration { CompanyName = Assembly.GetEntryAssembly().GetName().Name, ProductName = String.Empty };
 public static MetadataBasedStorageConfiguration NoCompanyInferred { get; } = new MetadataBasedStorageConfiguration { CompanyName = Assembly.GetExecutingAssembly().GetName().Name, ProductName = String.Empty };
 
                 /// <summary>
@@ -128,8 +124,7 @@ public static MetadataBasedStorageConfiguration NoCompanyInferred { get; } = new
                 /// An instance of <see cref="VersionInformation"/> with inferred values based on the entry assembly.
                 /// </summary>
                 /// <remarks>Should not be used with Unity.</remarks>
-         //       public static VersionInformation Inferred { get; } = new VersionInformation { BuildVersion = Assembly.GetEntryAssembly().GetName().Version.Build.ToString(), DisplayVersion = Assembly.GetEntryAssembly().GetName().Version.ToString(), OSVersion = Environment.OSVersion.ToString() };
-
+                //public static VersionInformation Inferred { get; } = new VersionInformation { BuildVersion = Assembly.GetEntryAssembly().GetName().Version.Build.ToString(), DisplayVersion = Assembly.GetEntryAssembly().GetName().Version.ToString(), OSVersion = Environment.OSVersion.ToString() };
 public static VersionInformation Inferred { get; } = new VersionInformation { BuildVersion = Assembly.GetExecutingAssembly().GetName().Version.Build.ToString(), DisplayVersion = Assembly.GetExecutingAssembly().GetName().Version.ToString(), OSVersion = Environment.OSVersion.ToString() };
                 /// <summary>
                 /// The build number of your app.
@@ -175,11 +170,7 @@ public static VersionInformation Inferred { get; } = new VersionInformation { Bu
             /// <summary>
             /// The Master Key for the Parse app targeted by <see cref="ApplicationID"/>.
             /// </summary>
-            public string MasterKey
-            {
-                get => AuxiliaryHeaders?["X-Parse-Master-Key"];
-                set => (AuxiliaryHeaders ?? (AuxiliaryHeaders = new Dictionary<string, string> { }))["X-Parse-Master-Key"] = value;
-            }
+            public string MasterKey { get; set; }
 
             /// <summary>
             /// Additional HTTP headers to be sent with network requests from the SDK.
@@ -207,9 +198,9 @@ public static VersionInformation Inferred { get; } = new VersionInformation { Bu
         /// The current configuration that parse has been initialized with.
         /// </summary>
         public static Configuration CurrentConfiguration { get; internal set; }
-        internal static string MasterKey { get; set; }
 
         internal static Version Version => new AssemblyName(typeof(ParseClient).GetTypeInfo().Assembly.FullName).Version;
+
         internal static string VersionString { get; }
 
         /// <summary>
@@ -237,8 +228,7 @@ public static VersionInformation Inferred { get; } = new VersionInformation { Bu
             lock (mutex)
             {
                 configuration.ServerURI = configuration.ServerURI ?? "https://api.parse.com/1/";
-                //if (configuration.Server == null || configuration.Server.Length < 11) throw new ArgumentNullException("Since the official parse server has shut down, you must specify the URI that points to another implementation.");
-
+                
                 switch (configuration.VersionInfo)
                 {
                     case Configuration.VersionInformation info when info.CanBeUsedForInference:
@@ -277,7 +267,7 @@ public static VersionInformation Inferred { get; } = new VersionInformation { Bu
         /// <returns></returns>
         public static async Task ReflectStorageChangeAsync(string originalRelativePath) => await StorageManager.TransferAsync(StorageManager.GetWrapperForRelativePersistentStorageFilePath(originalRelativePath).FullName, StorageManager.PersistentStorageFilePath);
 
-        internal static string BuildQueryString(IDictionary<string, object> parameters) => String.Join("&", (from pair in parameters let valueString = pair.Value as string select $"{Uri.EscapeDataString(pair.Key)}={Uri.EscapeDataString(String.IsNullOrEmpty(valueString) ? Json.Encode(pair.Value) : valueString)}").ToArray());
+        internal static string BuildQueryString(IDictionary<string, object> parameters) => String.Join("&", (from pair in parameters let valueString = pair.Value as string select $"{Uri.EscapeDataString(pair.Key)}={Uri.EscapeDataString(String.IsNullOrEmpty(valueString) ? JsonProcessor.Encode(pair.Value) : valueString)}").ToArray());
 
         internal static IDictionary<string, string> DecodeQueryString(string queryString)
         {
@@ -290,8 +280,8 @@ public static VersionInformation Inferred { get; } = new VersionInformation { Bu
             return dict;
         }
 
-        internal static IDictionary<string, object> DeserializeJsonString(string jsonData) => Json.Parse(jsonData) as IDictionary<string, object>;
+        internal static IDictionary<string, object> DeserializeJsonString(string jsonData) => JsonProcessor.Parse(jsonData) as IDictionary<string, object>;
 
-        internal static string SerializeJsonString(IDictionary<string, object> jsonData) => Json.Encode(jsonData);
+        internal static string SerializeJsonString(IDictionary<string, object> jsonData) => JsonProcessor.Encode(jsonData);
     }
 }

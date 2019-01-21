@@ -1,9 +1,6 @@
-// Copyright (c) 2015-present, Parse, LLC.  All rights reserved.  This source code is licensed under the BSD-style license found in the LICENSE file in the root directory of this source tree.  An additional grant of patent rights can be found in the PATENTS file in the same directory.
-
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Parse.Core.Internal;
 using Parse.Common.Internal;
 
 namespace Parse
@@ -17,31 +14,22 @@ namespace Parse
     /// </summary>
     public class ParseACL : IJsonConvertible
     {
-        private enum AccessKind
-        {
-            Read,
-            Write
-        }
-        private const string publicName = "*";
-        private readonly ICollection<string> readers = new HashSet<string>();
-        private readonly ICollection<string> writers = new HashSet<string>();
+        enum AccessKind { Read, Write }
+
+        ICollection<string> Readers { get; } = new HashSet<string> { };
+
+        ICollection<string> Writers { get; } = new HashSet<string> { };
 
         internal ParseACL(IDictionary<string, object> jsonObject)
         {
-            readers = new HashSet<string>(from pair in jsonObject
-                                          where ((IDictionary<string, object>) pair.Value).ContainsKey("read")
-                                          select pair.Key);
-            writers = new HashSet<string>(from pair in jsonObject
-                                          where ((IDictionary<string, object>) pair.Value).ContainsKey("write")
-                                          select pair.Key);
+            Readers = new HashSet<string>(from pair in jsonObject where ((IDictionary<string, object>) pair.Value).ContainsKey("read") select pair.Key);
+            Writers = new HashSet<string>(from pair in jsonObject where ((IDictionary<string, object>) pair.Value).ContainsKey("write") select pair.Key);
         }
 
         /// <summary>
         /// Creates an ACL with no permissions granted.
         /// </summary>
-        public ParseACL()
-        {
-        }
+        public ParseACL() { }
 
         /// <summary>
         /// Creates an ACL where only the provided user has access.
@@ -55,63 +43,59 @@ namespace Parse
 
         IDictionary<string, object> IJsonConvertible.ToJSON()
         {
-            Dictionary<string, object> result = new Dictionary<string, object>();
-            foreach (string user in readers.Union(writers))
+            Dictionary<string, object> result = new Dictionary<string, object> { };
+
+            foreach (string user in Readers.Union(Writers))
             {
-                Dictionary<string, object> userPermissions = new Dictionary<string, object>();
-                if (readers.Contains(user))
-                {
+                Dictionary<string, object> userPermissions = new Dictionary<string, object> { };
+
+                if (Readers.Contains(user))
                     userPermissions["read"] = true;
-                }
-                if (writers.Contains(user))
-                {
+                if (Writers.Contains(user))
                     userPermissions["write"] = true;
-                }
+
                 result[user] = userPermissions;
             }
+
             return result;
         }
 
         private void SetAccess(AccessKind kind, string userId, bool allowed)
         {
             if (userId == null)
-            {
                 throw new ArgumentException("Cannot set access for an unsaved user or role.");
-            }
+
             ICollection<string> target = null;
+
             switch (kind)
             {
                 case AccessKind.Read:
-                    target = readers;
+                    target = Readers;
                     break;
                 case AccessKind.Write:
-                    target = writers;
+                    target = Writers;
                     break;
                 default:
                     throw new NotImplementedException("Unknown AccessKind");
             }
+
             if (allowed)
-            {
                 target.Add(userId);
-            }
             else
-            {
                 target.Remove(userId);
-            }
         }
 
         private bool GetAccess(AccessKind kind, string userId)
         {
             if (userId == null)
-            {
                 throw new ArgumentException("Cannot get access for an unsaved user or role.");
-            }
+
             switch (kind)
             {
                 case AccessKind.Read:
-                    return readers.Contains(userId);
+                    return Readers.Contains(userId);
                 case AccessKind.Write:
-                    return writers.Contains(userId);
+                    return Writers.Contains(userId);
                 default:
                     throw new NotImplementedException("Unknown AccessKind");
             }
@@ -122,8 +106,8 @@ namespace Parse
         /// </summary>
         public bool PublicReadAccess
         {
-            get => GetAccess(AccessKind.Read, publicName);
-            set => SetAccess(AccessKind.Read, publicName, value);
+            get => GetAccess(AccessKind.Read, "*");
+            set => SetAccess(AccessKind.Read, "*", value);
         }
 
         /// <summary>
@@ -131,8 +115,8 @@ namespace Parse
         /// </summary>
         public bool PublicWriteAccess
         {
-            get => GetAccess(AccessKind.Write, publicName);
-            set => SetAccess(AccessKind.Write, publicName, value);
+            get => GetAccess(AccessKind.Write, "*");
+            set => SetAccess(AccessKind.Write, "*", value);
         }
 
         /// <summary>

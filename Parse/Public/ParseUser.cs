@@ -18,13 +18,35 @@ namespace Parse
     [ParseClassName("_User")]
     public class ParseUser : ParseObject
     {
-        private static readonly IDictionary<string, IParseAuthenticationProvider> authProviders = new Dictionary<string, IParseAuthenticationProvider>();
+        /// <summary>
+        /// Gets the currently logged in ParseUser with a valid session, either from memory or disk
+        /// if necessary.
+        /// </summary>
+        public static ParseUser CurrentUser
+        {
+            get
+            {
+                Task<ParseUser> userTask = GetCurrentUserAsync();
+                // TODO (hallucinogen): this will without a doubt fail in Unity. How should we fix it?
+                userTask.Wait();
+                return userTask.Result;
+            }
+        }
 
-        private static readonly HashSet<string> readOnlyKeys = new HashSet<string> { "sessionToken", "isNew" };
+        /// <summary>
+        /// Constructs a <see cref="ParseQuery{ParseUser}"/> for ParseUsers.
+        /// </summary>
+        public static ParseQuery<ParseUser> Query => new ParseQuery<ParseUser> { };
 
-        internal static IParseUserController UserController => ParseCorePlugins.Instance.UserController;
-
-        internal static IParseCurrentUserController CurrentUserController => ParseCorePlugins.Instance.CurrentUserController;
+        /// <summary>
+        /// Sets the email address.
+        /// </summary>
+        [ParseFieldName("email")]
+        public string Email
+        {
+            get => GetProperty<string>("Email", null);
+            set => SetProperty(value, "Email");
+        }
 
         /// <summary>
         /// Whether the ParseUser has been authenticated on this device. Only an authenticated
@@ -34,70 +56,9 @@ namespace Parse
         {
             get
             {
-                lock (mutex)
-                {
+                lock (Mutex)
                     return SessionToken != null && CurrentUser != null && CurrentUser.ObjectId == ObjectId;
-                }
             }
-        }
-
-        /// <summary>
-        /// Removes a key from the object's data if it exists.
-        /// </summary>
-        /// <param name="key">The key to remove.</param>
-        /// <exception cref="System.ArgumentException">Cannot remove the username key.</exception>
-        public override void Remove(string key)
-        {
-            if (key == "username")
-            {
-                throw new ArgumentException("Cannot remove the username key.");
-            }
-            base.Remove(key);
-        }
-
-        protected override bool IsKeyMutable(string key) => !readOnlyKeys.Contains(key);
-
-        internal override void HandleSave(IObjectState serverState)
-        {
-            base.HandleSave(serverState);
-
-            SynchronizeAllAuthData();
-            CleanupAuthData();
-
-            MutateState(mutableClone => mutableClone.ServerData.Remove("password"));
-        }
-
-        public string SessionToken => State.ContainsKey("sessionToken") ? State["sessionToken"] as string : null;
-
-        internal static string CurrentSessionToken
-        {
-            get
-            {
-                Task<string> sessionTokenTask = GetCurrentSessionTokenAsync();
-                sessionTokenTask.Wait();
-                return sessionTokenTask.Result;
-            }
-        }
-
-        internal static Task<string> GetCurrentSessionTokenAsync(CancellationToken cancellationToken = default) => CurrentUserController.GetCurrentSessionTokenAsync(cancellationToken);
-
-        internal Task SetSessionTokenAsync(string newSessionToken) => SetSessionTokenAsync(newSessionToken, CancellationToken.None);
-
-        internal Task SetSessionTokenAsync(string newSessionToken, CancellationToken cancellationToken)
-        {
-            MutateState(mutableClone => mutableClone.ServerData["sessionToken"] = newSessionToken);
-
-            return SaveCurrentUserAsync(this);
-        }
-
-        /// <summary>
-        /// Gets or sets the username.
-        /// </summary>
-        [ParseFieldName("username")]
-        public string Username
-        {
-            get => GetProperty<string>(null, "Username");
-            set => SetProperty(value, "Username");
         }
 
         /// <summary>
@@ -106,75 +67,49 @@ namespace Parse
         [ParseFieldName("password")]
         public string Password
         {
-            private get => GetProperty<string>(null, "Password");
+            private get => GetProperty<string>("Password", null);
             set => SetProperty(value, "Password");
         }
 
         /// <summary>
-        /// Sets the email address.
+        /// A token representing the current session.
         /// </summary>
-        [ParseFieldName("email")]
-        public string Email
-        {
-            get => GetProperty<string>(null, "Email");
-            set => SetProperty(value, "Email");
-        }
-
-        internal Task SignUpAsync(Task toAwait, CancellationToken cancellationToken)
-        {
-            if (AuthData == null)
-            {
-                // TODO (hallucinogen): make an Extension of Task to create Task with exception/canceled.
-                if (String.IsNullOrEmpty(Username))
-                {
-                    TaskCompletionSource<object> tcs = new TaskCompletionSource<object>();
-                    tcs.TrySetException(new InvalidOperationException("Cannot sign up user with an empty name."));
-                    return tcs.Task;
-                }
-                if (String.IsNullOrEmpty(Password))
-                {
-                    TaskCompletionSource<object> tcs = new TaskCompletionSource<object>();
-                    tcs.TrySetException(new InvalidOperationException("Cannot sign up user with an empty password."));
-                    return tcs.Task;
-                }
-            }
-            if (!String.IsNullOrEmpty(ObjectId))
-            {
-                TaskCompletionSource<object> tcs = new TaskCompletionSource<object>();
-                tcs.TrySetException(new InvalidOperationException("Cannot sign up a user that already exists."));
-                return tcs.Task;
-            }
-
-            IDictionary<string, IParseFieldOperation> currentOperations = StartSave();
-
-            return toAwait.OnSuccess(_ => UserController.SignUpAsync(State, currentOperations, cancellationToken)).Unwrap().ContinueWith(t =>
-            {
-                if (t.IsFaulted || t.IsCanceled)
-                {
-                    HandleFailedSave(currentOperations);
-                }
-                else
-                {
-                    HandleSave(t.Result);
-                }
-                return t;
-            }).Unwrap().OnSuccess(_ => SaveCurrentUserAsync(this)).Unwrap();
-        }
+        public string SessionToken => State.ContainsKey("sessionToken") ? State["sessionToken"] as string : null;
 
         /// <summary>
-        /// Signs up a new user. This will create a new ParseUser on the server and will also persist the
-        /// session on disk so that you can access the user using <see cref="CurrentUser"/>. A username and
-        /// password must be set before calling SignUpAsync.
+        /// Gets or sets the username.
         /// </summary>
-        public Task SignUpAsync() => SignUpAsync(CancellationToken.None);
+        [ParseFieldName("username")]
+        public string Username
+        {
+            get => GetProperty<string>("Username", null);
+            set => SetProperty(value, "Username");
+        }
+
+        internal static IParseCurrentUserController CurrentUserController => ParseCorePlugins.Instance.CurrentUserController;
+
+        internal static IParseUserController UserController => ParseCorePlugins.Instance.UserController;
 
         /// <summary>
-        /// Signs up a new user. This will create a new ParseUser on the server and will also persist the
-        /// session on disk so that you can access the user using <see cref="CurrentUser"/>. A username and
-        /// password must be set before calling SignUpAsync.
+        /// Logs in a user with a username and password. On success, this saves the session to disk so you
+        /// can retrieve the currently logged in user using <see cref="CurrentUser"/>.
         /// </summary>
+        /// <param name="sessionToken">The session token to authorize with</param>
+        /// <returns>The user if authorization was successful</returns>
+        public static Task<ParseUser> BecomeAsync(string sessionToken) => BecomeAsync(sessionToken, CancellationToken.None);
+
+        /// <summary>
+        /// Logs in a user with a username and password. On success, this saves the session to disk so you
+        /// can retrieve the currently logged in user using <see cref="CurrentUser"/>.
+        /// </summary>
+        /// <param name="sessionToken">The session token to authorize with</param>
         /// <param name="cancellationToken">The cancellation token.</param>
-        public Task SignUpAsync(CancellationToken cancellationToken) => taskQueue.Enqueue(toAwait => SignUpAsync(toAwait, cancellationToken), cancellationToken);
+        /// <returns>The user if authorization was successful</returns>
+        public static Task<ParseUser> BecomeAsync(string sessionToken, CancellationToken cancellationToken) => UserController.GetUserAsync(sessionToken, cancellationToken).OnSuccess(t =>
+        {
+            ParseUser user = FromState<ParseUser>(t.Result, "_User");
+            return SaveCurrentUserAsync(user).OnSuccess(_ => user);
+        }).Unwrap();
 
         /// <summary>
         /// Logs in a user with a username and password. On success, this saves the session to disk so you
@@ -200,66 +135,13 @@ namespace Parse
         }).Unwrap();
 
         /// <summary>
-        /// Logs in a user with a username and password. On success, this saves the session to disk so you
-        /// can retrieve the currently logged in user using <see cref="CurrentUser"/>.
-        /// </summary>
-        /// <param name="sessionToken">The session token to authorize with</param>
-        /// <returns>The user if authorization was successful</returns>
-        public static Task<ParseUser> BecomeAsync(string sessionToken) => BecomeAsync(sessionToken, CancellationToken.None);
-
-        /// <summary>
-        /// Logs in a user with a username and password. On success, this saves the session to disk so you
-        /// can retrieve the currently logged in user using <see cref="CurrentUser"/>.
-        /// </summary>
-        /// <param name="sessionToken">The session token to authorize with</param>
-        /// <param name="cancellationToken">The cancellation token.</param>
-        /// <returns>The user if authorization was successful</returns>
-        public static Task<ParseUser> BecomeAsync(string sessionToken, CancellationToken cancellationToken) => UserController.GetUserAsync(sessionToken, cancellationToken).OnSuccess(t =>
-        {
-            ParseUser user = FromState<ParseUser>(t.Result, "_User");
-            return SaveCurrentUserAsync(user).OnSuccess(_ => user);
-        }).Unwrap();
-
-        protected override Task SaveAsync(Task toAwait, CancellationToken cancellationToken)
-        {
-            lock (mutex)
-            {
-                if (ObjectId == null)
-                {
-                    throw new InvalidOperationException("You must call SignUpAsync before calling SaveAsync.");
-                }
-                return base.SaveAsync(toAwait, cancellationToken).OnSuccess(_ =>
-                {
-                    if (!CurrentUserController.IsCurrent(this))
-                    {
-                        return Task.FromResult(0);
-                    }
-                    return SaveCurrentUserAsync(this);
-                }).Unwrap();
-            }
-        }
-
-        // If this is already the current user, refresh its state on disk.
-        internal override Task<ParseObject> FetchAsyncInternal(Task toAwait, CancellationToken cancellationToken) => base.FetchAsyncInternal(toAwait, cancellationToken).OnSuccess(t => !CurrentUserController.IsCurrent(this) ? Task.FromResult(t.Result) : SaveCurrentUserAsync(this).OnSuccess(_ => t.Result)).Unwrap();
-
-        /// <summary>
         /// Logs out the currently logged in user session. This will remove the session from disk, log out of
         /// linked services, and future calls to <see cref="CurrentUser"/> will return <c>null</c>.
         /// </summary>
         /// <remarks>
         /// Typically, you should use <see cref="LogOutAsync()"/>, unless you are managing your own threading.
         /// </remarks>
-        public static void LogOut() => LogOutAsync().Wait(); // TODO (hallucinogen): this will without a doubt fail in Unity. But what else can we do?
-
-        /// <summary>
-        /// Logs out the currently logged in user session. This will remove the session from disk, log out of
-        /// linked services, and future calls to <see cref="CurrentUser"/> will return <c>null</c>.
-        /// </summary>
-        /// <remarks>
-        /// This is preferable to using <see cref="LogOut()"/>, unless your code is already running from a
-        /// background thread.
-        /// </remarks>
-        public static Task LogOutAsync() => LogOutAsync(CancellationToken.None);
+        public static void LogOut() => LogOutAsync().Wait();
 
         /// <summary>
         /// Logs out the currently logged in user session. This will remove the session from disk, log out of
@@ -268,172 +150,11 @@ namespace Parse
         /// This is preferable to using <see cref="LogOut()"/>, unless your code is already running from a
         /// background thread.
         /// </summary>
-        public static Task LogOutAsync(CancellationToken cancellationToken)
+        public static Task LogOutAsync(CancellationToken cancellationToken = default) => GetCurrentUserAsync().OnSuccess(t =>
         {
-            return GetCurrentUserAsync().OnSuccess(t =>
-            {
-                LogOutWithProviders();
-
-                ParseUser user = t.Result;
-                if (user == null)
-                {
-                    return Task.FromResult(0);
-                }
-
-                return user.taskQueue.Enqueue(toAwait => user.LogOutAsync(toAwait, cancellationToken), cancellationToken);
-            }).Unwrap();
-        }
-
-        internal Task LogOutAsync(Task toAwait, CancellationToken cancellationToken)
-        {
-            string oldSessionToken = SessionToken;
-            if (oldSessionToken == null)
-            {
-                return Task.FromResult(0);
-            }
-
-            // Cleanup in-memory session.
-            MutateState(mutableClone =>
-            {
-                mutableClone.ServerData.Remove("sessionToken");
-            });
-            var revokeSessionTask = ParseSession.RevokeAsync(oldSessionToken, cancellationToken);
-            return Task.WhenAll(revokeSessionTask, CurrentUserController.LogOutAsync(cancellationToken));
-        }
-
-        private static void LogOutWithProviders()
-        {
-            foreach (var provider in authProviders.Values)
-            {
-                provider.Deauthenticate();
-            }
-        }
-
-        /// <summary>
-        /// Gets the currently logged in ParseUser with a valid session, either from memory or disk
-        /// if necessary.
-        /// </summary>
-        public static ParseUser CurrentUser
-        {
-            get
-            {
-                var userTask = GetCurrentUserAsync();
-                // TODO (hallucinogen): this will without a doubt fail in Unity. How should we fix it?
-                userTask.Wait();
-                return userTask.Result;
-            }
-        }
-
-        /// <summary>
-        /// Gets the currently logged in ParseUser with a valid session, either from memory or disk
-        /// if necessary, asynchronously.
-        /// </summary>
-        internal static Task<ParseUser> GetCurrentUserAsync() => GetCurrentUserAsync(CancellationToken.None);
-
-        /// <summary>
-        /// Gets the currently logged in ParseUser with a valid session, either from memory or disk
-        /// if necessary, asynchronously.
-        /// </summary>
-        internal static Task<ParseUser> GetCurrentUserAsync(CancellationToken cancellationToken) => CurrentUserController.GetAsync(cancellationToken);
-
-        private static Task SaveCurrentUserAsync(ParseUser user) => SaveCurrentUserAsync(user, CancellationToken.None);
-
-        private static Task SaveCurrentUserAsync(ParseUser user, CancellationToken cancellationToken) => CurrentUserController.SetAsync(user, cancellationToken);
-
-        internal static void ClearInMemoryUser() => CurrentUserController.ClearFromMemory();
-
-        /// <summary>
-        /// Constructs a <see cref="ParseQuery{ParseUser}"/> for ParseUsers.
-        /// </summary>
-        public static ParseQuery<ParseUser> Query => new ParseQuery<ParseUser>();
-
-        #region Legacy / Revocable Session Tokens
-
-        private static readonly object isRevocableSessionEnabledMutex = new object();
-        private static bool isRevocableSessionEnabled;
-
-        /// <summary>
-        /// Tells server to use revocable session on LogIn and SignUp, even when App's Settings
-        /// has "Require Revocable Session" turned off. Issues network request in background to
-        /// migrate the sessionToken on disk to revocable session.
-        /// </summary>
-        /// <returns>The Task that upgrades the session.</returns>
-        public static Task EnableRevocableSessionAsync()
-        {
-            return EnableRevocableSessionAsync(CancellationToken.None);
-        }
-
-        /// <summary>
-        /// Tells server to use revocable session on LogIn and SignUp, even when App's Settings
-        /// has "Require Revocable Session" turned off. Issues network request in background to
-        /// migrate the sessionToken on disk to revocable session.
-        /// </summary>
-        /// <returns>The Task that upgrades the session.</returns>
-        public static Task EnableRevocableSessionAsync(CancellationToken cancellationToken)
-        {
-            lock (isRevocableSessionEnabledMutex)
-            {
-                isRevocableSessionEnabled = true;
-            }
-
-            return GetCurrentUserAsync(cancellationToken).OnSuccess(t =>
-            {
-                var user = t.Result;
-                return user.UpgradeToRevocableSessionAsync(cancellationToken);
-            });
-        }
-
-        internal static void DisableRevocableSession()
-        {
-            lock (isRevocableSessionEnabledMutex)
-            {
-                isRevocableSessionEnabled = false;
-            }
-        }
-
-        internal static bool IsRevocableSessionEnabled
-        {
-            get
-            {
-                lock (isRevocableSessionEnabledMutex)
-                {
-                    return isRevocableSessionEnabled;
-                }
-            }
-        }
-
-        internal Task UpgradeToRevocableSessionAsync()
-        {
-            return UpgradeToRevocableSessionAsync(CancellationToken.None);
-        }
-
-        internal Task UpgradeToRevocableSessionAsync(CancellationToken cancellationToken)
-        {
-            return taskQueue.Enqueue(toAwait => UpgradeToRevocableSessionAsync(toAwait, cancellationToken),
-                cancellationToken);
-        }
-
-        internal Task UpgradeToRevocableSessionAsync(Task toAwait, CancellationToken cancellationToken)
-        {
-            string sessionToken = SessionToken;
-
-            return toAwait.OnSuccess(_ =>
-            {
-                return ParseSession.UpgradeToRevocableSessionAsync(sessionToken, cancellationToken);
-            }).Unwrap().OnSuccess(t =>
-            {
-                return SetSessionTokenAsync(t.Result);
-            }).Unwrap();
-        }
-
-        #endregion
-
-        /// <summary>
-        /// Requests a password reset email to be sent to the specified email address associated with the
-        /// user account. This email allows the user to securely reset their password on the Parse site.
-        /// </summary>
-        /// <param name="email">The email address associated with the user that forgot their password.</param>
-        public static Task RequestPasswordResetAsync(string email) => RequestPasswordResetAsync(email, CancellationToken.None);
+            LogOutWithProviders();
+            return t.Result is ParseUser user ? user.Queue.Enqueue(toAwait => user.LogOutAsync(toAwait, cancellationToken), cancellationToken) : Task.FromResult(0);
+        }).Unwrap();
 
         /// <summary>
         /// Requests a password reset email to be sent to the specified email address associated with the
@@ -441,7 +162,39 @@ namespace Parse
         /// </summary>
         /// <param name="email">The email address associated with the user that forgot their password.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
-        public static Task RequestPasswordResetAsync(string email, CancellationToken cancellationToken) => UserController.RequestPasswordResetAsync(email, cancellationToken);
+        public static Task RequestPasswordResetAsync(string email, CancellationToken cancellationToken = default) => UserController.RequestPasswordResetAsync(email, cancellationToken);
+
+        /// <summary>
+        /// Removes a key from the object's data if it exists.
+        /// </summary>
+        /// <param name="key">The key to remove.</param>
+        /// <exception cref="System.ArgumentException">Cannot remove the username key.</exception>
+        public override void Remove(string key)
+        {
+            if (key == "username")
+            {
+                throw new ArgumentException("Cannot remove the username key.");
+            }
+            base.Remove(key);
+        }
+
+        /// <summary>
+        /// Signs up a new user. This will create a new ParseUser on the server and will also persist the
+        /// session on disk so that you can access the user using <see cref="CurrentUser"/>. A username and
+        /// password must be set before calling SignUpAsync.
+        /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        public Task SignUpAsync(CancellationToken cancellationToken = default) => Queue.Enqueue(toAwait => SignUpAsync(toAwait, cancellationToken), cancellationToken);
+
+        internal static string CurrentSessionToken
+        {
+            get
+            {
+                Task<string> sessionTokenTask = GetCurrentSessionTokenAsync();
+                sessionTokenTask.Wait();
+                return sessionTokenTask.Result;
+            }
+        }
 
         /// <summary>
         /// Gets the authData for this user.
@@ -452,61 +205,232 @@ namespace Parse
             private set => this["authData"] = value;
         }
 
-        private static IParseAuthenticationProvider GetProvider(string providerName) => authProviders.TryGetValue(providerName, out IParseAuthenticationProvider provider) ? provider : null;
+        internal static void ClearInMemoryUser() => CurrentUserController.ClearFromMemory();
 
+        internal static Task<string> GetCurrentSessionTokenAsync(CancellationToken cancellationToken = default) => CurrentUserController.GetCurrentSessionTokenAsync(cancellationToken);
+
+        /// <summary>
+        /// Gets the currently logged in ParseUser with a valid session, either from memory or disk
+        /// if necessary, asynchronously.
+        /// </summary>
+        internal static Task<ParseUser> GetCurrentUserAsync(CancellationToken cancellationToken = default) => CurrentUserController.GetAsync(cancellationToken);
+
+        internal static Task<ParseUser> LogInWithAsync(string authType, IDictionary<string, object> data, CancellationToken cancellationToken)
+        {
+            ParseUser user = null;
+
+            return UserController.LogInAsync(authType, data, cancellationToken).OnSuccess(t =>
+            {
+                user = FromState<ParseUser>(t.Result, "_User");
+
+                lock (user.Mutex)
+                {
+                    if (user.AuthData == null)
+                        user.AuthData = new Dictionary<string, IDictionary<string, object>> { };
+
+                    user.AuthData[authType] = data;
+                    user.SynchronizeAllAuthData();
+                }
+
+                return SaveCurrentUserAsync(user);
+            }).Unwrap().OnSuccess(t => user);
+        }
+
+        internal static Task<ParseUser> LogInWithAsync(string authType, CancellationToken cancellationToken) => GetProvider(authType).AuthenticateAsync(cancellationToken).OnSuccess(authData => LogInWithAsync(authType, authData.Result, cancellationToken)).Unwrap();
+
+        internal static void RegisterProvider(IParseAuthenticationProvider provider)
+        {
+            Authentication[provider.AuthType] = provider;
+            CurrentUser?.SynchronizeAuthData(provider);
+        }
+
+        // If this is already the current user, refresh its state on disk.
+        internal override Task<ParseObject> FetchAsyncInternal(Task toAwait, CancellationToken cancellationToken) => base.FetchAsyncInternal(toAwait, cancellationToken).OnSuccess(t => !CurrentUserController.IsCurrent(this) ? Task.FromResult(t.Result) : SaveCurrentUserAsync(this).OnSuccess(_ => t.Result)).Unwrap();
+
+        internal override void HandleSave(IObjectState serverState)
+        {
+            base.HandleSave(serverState);
+
+            SynchronizeAllAuthData();
+            CleanupAuthData();
+
+            MutateState(mutableClone => mutableClone.ServerData.Remove("password"));
+        }
+
+        /// <summary>
+        /// Checks whether a user is linked to a service.
+        /// </summary>
+        internal bool IsLinked(string authType)
+        {
+            lock (Mutex)
+                return AuthData != null && AuthData.ContainsKey(authType) && AuthData[authType] != null;
+        }
+
+        internal Task LinkWithAsync(string authType, IDictionary<string, object> data, CancellationToken cancellationToken) => Queue.Enqueue(toAwait =>
+        {
+            IDictionary<string, IDictionary<string, object>> authData = AuthData;
+            if (authData == null)
+            {
+                authData = AuthData = new Dictionary<string, IDictionary<string, object>>();
+            }
+            authData[authType] = data;
+            AuthData = authData;
+            return SaveAsync(cancellationToken);
+        }, cancellationToken);
+
+        internal Task LinkWithAsync(string authType, CancellationToken cancellationToken) => GetProvider(authType).AuthenticateAsync(cancellationToken).OnSuccess(t => LinkWithAsync(authType, t.Result, cancellationToken)).Unwrap();
+
+        // TODO (hallucinogen): this will without a doubt fail in Unity. But what else can we do?
+        internal Task LogOutAsync(Task toAwait, CancellationToken cancellationToken)
+        {
+            string oldSessionToken = SessionToken;
+            if (oldSessionToken == null)
+                return Task.FromResult(0);
+
+            // Cleanup in-memory session.
+            MutateState(mutableClone => mutableClone.ServerData.Remove("sessionToken"));
+            return Task.WhenAll(ParseSession.RevokeAsync(oldSessionToken, cancellationToken), CurrentUserController.LogOutAsync(cancellationToken));
+        }
+
+        internal Task SetSessionTokenAsync(string newSessionToken, CancellationToken cancellationToken = default)
+        {
+            MutateState(mutableClone => mutableClone.ServerData["sessionToken"] = newSessionToken);
+            return SaveCurrentUserAsync(this);
+        }
+
+        internal Task SignUpAsync(Task toAwait, CancellationToken cancellationToken = default)
+        {
+            if (AuthData == null)
+            {
+                if (String.IsNullOrEmpty(Username))
+                    return Task.FromException(new InvalidOperationException("Cannot sign up user with an empty name."));
+                if (String.IsNullOrEmpty(Password))
+                    return Task.FromException(new InvalidOperationException("Cannot sign up user with an empty password."));
+            }
+            if (!String.IsNullOrEmpty(ObjectId))
+                return Task.FromException(new InvalidOperationException("Cannot sign up a user that already exists."));
+
+            IDictionary<string, IParseFieldOperation> currentOperations = StartSave();
+
+            return toAwait.OnSuccess(_ => UserController.SignUpAsync(State, currentOperations, cancellationToken)).Unwrap().ContinueWith(t =>
+            {
+                if (t.IsFaulted || t.IsCanceled)
+                    HandleFailedSave(currentOperations);
+                else
+                    HandleSave(t.Result);
+
+                return t;
+            }).Unwrap().OnSuccess(_ => SaveCurrentUserAsync(this)).Unwrap();
+        }
+
+        /// <summary>
+        /// Unlinks a user from a service.
+        /// </summary>
+        internal Task UnlinkFromAsync(string authType, CancellationToken cancellationToken) => LinkWithAsync(authType, null, cancellationToken);
+
+        /// <summary>
+        /// Checks if the given <paramref name="key"/> is mutable on this object.
+        /// </summary>
+        /// <param name="key"></param>
+        /// <returns></returns>
+        protected override bool IsKeyMutable(string key) => !ReadOnlyKeys.Contains(key);
+
+        protected override Task SaveAsync(Task toAwait, CancellationToken cancellationToken = default)
+        {
+            lock (Mutex)
+                return ObjectId is null ? throw new InvalidOperationException("You must call SignUpAsync before calling SaveAsync.") : base.SaveAsync(toAwait, cancellationToken).OnSuccess(_ => !CurrentUserController.IsCurrent(this) ? Task.FromResult(0) : SaveCurrentUserAsync(this)).Unwrap();
+        }
+
+        static IDictionary<string, IParseAuthenticationProvider> Authentication { get; } = new Dictionary<string, IParseAuthenticationProvider> { };
+
+        static HashSet<string> ReadOnlyKeys { get; } = new HashSet<string> { "sessionToken", "isNew" };
+        private static IParseAuthenticationProvider GetProvider(string providerName) => Authentication.TryGetValue(providerName, out IParseAuthenticationProvider provider) ? provider : null;
+
+        private static void LogOutWithProviders()
+        {
+            foreach (IParseAuthenticationProvider provider in Authentication.Values)
+                provider.Deauthenticate();
+        }
+        static Task SaveCurrentUserAsync(ParseUser user, CancellationToken cancellationToken = default) => CurrentUserController.SetAsync(user, cancellationToken);
+        #region Legacy / Revocable Session Tokens
+
+        /// <summary>
+        /// Tells server to use revocable session on LogIn and SignUp, even when App's Settings
+        /// has "Require Revocable Session" turned off. Issues network request in background to
+        /// migrate the sessionToken on disk to revocable session.
+        /// </summary>
+        /// <returns>The Task that upgrades the session.</returns>
+        public static Task EnableRevocableSessionAsync(CancellationToken cancellationToken = default)
+        {
+            IsRevocableSessionEnabled = true;
+            return GetCurrentUserAsync(cancellationToken).OnSuccess(t => t.Result.UpgradeToRevocableSessionAsync(cancellationToken));
+        }
+
+        internal static bool IsRevocableSessionEnabled
+        {
+            get
+            {
+                lock (RevocableSessionMutex)
+                    return _IsRevocableSessionEnabled;
+            }
+            set
+            {
+                lock (RevocableSessionMutex)
+                    _IsRevocableSessionEnabled = value;
+            }
+        }
+
+        internal Task UpgradeToRevocableSessionAsync(CancellationToken cancellationToken = default) => Queue.Enqueue(toAwait => UpgradeToRevocableSessionAsync(toAwait, cancellationToken), cancellationToken);
+
+        internal Task UpgradeToRevocableSessionAsync(Task toAwait, CancellationToken cancellationToken)
+        {
+            string sessionToken = SessionToken; // NOTE: Inlining could cause race condition if for some reason the session token changes before all the queued tasks here finish.
+
+            return toAwait.OnSuccess(_ => ParseSession.UpgradeToRevocableSessionAsync(sessionToken, cancellationToken)).Unwrap().OnSuccess(t => SetSessionTokenAsync(t.Result)).Unwrap();
+        }
+
+        static bool _IsRevocableSessionEnabled;
+        static object RevocableSessionMutex { get; } = new object { };
+        #endregion
         /// <summary>
         /// Removes null values from authData (which exist temporarily for unlinking)
         /// </summary>
         private void CleanupAuthData()
         {
-            lock (mutex)
+            lock (Mutex)
             {
                 if (!CurrentUserController.IsCurrent(this))
-                {
                     return;
-                }
+
                 IDictionary<string, IDictionary<string, object>> authData = AuthData;
 
                 if (authData == null)
-                {
                     return;
-                }
 
                 foreach (KeyValuePair<string, IDictionary<string, object>> pair in new Dictionary<string, IDictionary<string, object>>(authData))
-                {
                     if (pair.Value == null)
-                    {
                         authData.Remove(pair.Key);
-                    }
-                }
             }
         }
 
-        /// <summary>
-        /// Synchronizes authData for all providers.
-        /// </summary>
-        private void SynchronizeAllAuthData()
+        void SynchronizeAllAuthData()
         {
-            lock (mutex)
+            lock (Mutex)
             {
                 IDictionary<string, IDictionary<string, object>> authData = AuthData;
 
                 if (authData == null)
-                {
                     return;
-                }
 
-                foreach (var pair in authData)
-                {
+                foreach (KeyValuePair<string, IDictionary<string, object>> pair in authData)
                     SynchronizeAuthData(GetProvider(pair.Key));
-                }
             }
         }
 
         private void SynchronizeAuthData(IParseAuthenticationProvider provider)
         {
             bool restorationSuccess = false;
-            lock (mutex)
+            lock (Mutex)
             {
                 IDictionary<string, IDictionary<string, object>> authData = AuthData;
                 if (authData == null || provider == null)
@@ -522,78 +446,6 @@ namespace Parse
             if (!restorationSuccess)
             {
                 UnlinkFromAsync(provider.AuthType, CancellationToken.None);
-            }
-        }
-
-        internal Task LinkWithAsync(string authType, IDictionary<string, object> data, CancellationToken cancellationToken) => taskQueue.Enqueue(toAwait =>
-        {
-            IDictionary<string, IDictionary<string, object>> authData = AuthData;
-            if (authData == null)
-            {
-                authData = AuthData = new Dictionary<string, IDictionary<string, object>>();
-            }
-            authData[authType] = data;
-            AuthData = authData;
-            return SaveAsync(cancellationToken);
-        }, cancellationToken);
-
-        internal Task LinkWithAsync(string authType, CancellationToken cancellationToken)
-        {
-            IParseAuthenticationProvider provider = GetProvider(authType);
-            return provider.AuthenticateAsync(cancellationToken).OnSuccess(t => LinkWithAsync(authType, t.Result, cancellationToken)).Unwrap();
-        }
-
-        /// <summary>
-        /// Unlinks a user from a service.
-        /// </summary>
-        internal Task UnlinkFromAsync(string authType, CancellationToken cancellationToken) => LinkWithAsync(authType, null, cancellationToken);
-
-        /// <summary>
-        /// Checks whether a user is linked to a service.
-        /// </summary>
-        internal bool IsLinked(string authType)
-        {
-            lock (mutex)
-            {
-                return AuthData != null && AuthData.ContainsKey(authType) && AuthData[authType] != null;
-            }
-        }
-
-        internal static Task<ParseUser> LogInWithAsync(string authType, IDictionary<string, object> data, CancellationToken cancellationToken)
-        {
-            ParseUser user = null;
-
-            return UserController.LogInAsync(authType, data, cancellationToken).OnSuccess(t =>
-            {
-                user = FromState<ParseUser>(t.Result, "_User");
-
-                lock (user.mutex)
-                {
-                    if (user.AuthData == null)
-                    {
-                        user.AuthData = new Dictionary<string, IDictionary<string, object>>();
-                    }
-                    user.AuthData[authType] = data;
-                    user.SynchronizeAllAuthData();
-                }
-
-                return SaveCurrentUserAsync(user);
-            }).Unwrap().OnSuccess(t => user);
-        }
-
-        internal static Task<ParseUser> LogInWithAsync(string authType, CancellationToken cancellationToken)
-        {
-            IParseAuthenticationProvider provider = GetProvider(authType);
-            return provider.AuthenticateAsync(cancellationToken).OnSuccess(authData => LogInWithAsync(authType, authData.Result, cancellationToken)).Unwrap();
-        }
-
-        internal static void RegisterProvider(IParseAuthenticationProvider provider)
-        {
-            authProviders[provider.AuthType] = provider;
-            ParseUser curUser = CurrentUser;
-            if (curUser != null)
-            {
-                curUser.SynchronizeAuthData(provider);
             }
         }
     }
